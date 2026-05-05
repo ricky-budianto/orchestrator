@@ -1,0 +1,250 @@
+# User Verification Flow
+# 
+# This workflow demonstrates a comprehensive user verification process
+# including identity validation, risk assessment, and approval workflow
+
+name: user_verification_flow
+requestType: user_verification
+path: /api/ibridge/v1/user-verification
+method: POST
+startEvent:
+  targetRef: validate_request
+
+serviceTask:
+  validate_request:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        user_id: ${{startEvent.Body.user_id}}
+        email: ${{startEvent.Body.email}}
+        phone: ${{startEvent.Body.phone}}
+        nik: ${{startEvent.Body.nik}}
+        full_name: ${{startEvent.Body.full_name}}
+    targetRef: 
+      - condition_validate_request
+    worker: middleware
+  
+  condition_validate_request:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{validate_request.data.data.valid}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 400
+          save_global:
+            status_code: 400
+            message: "Invalid request data"
+            error_code: "USER_001"
+            details: ${{validate_request.data.data.errors}}
+    defaultTasK: check_email_validity
+
+  check_email_validity:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        email: ${{startEvent.Body.email}}
+        domain_check: true
+        disposable_check: true
+    targetRef: 
+      - condition_email_validity
+    worker: middleware
+  
+  condition_email_validity:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{check_email_validity.data.data.disposable_email}}
+        - ${{check_email_validity.data.data.valid_domain}}
+      value:
+        - case:
+          - true
+          - false
+          target: ibridge-reply
+          status_code: 422
+          save_global:
+            status_code: 422
+            message: "Invalid email address"
+            error_code: "USER_002"
+            reason: "Disposable email or invalid domain"
+    defaultTasK: verify_phone_number
+
+  verify_phone_number:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        phone: ${{startEvent.Body.phone}}
+        country_code: ${{startEvent.Body.country_code}}
+        verification_type: "sms"
+    targetRef: 
+      - condition_phone_verification
+    worker: middleware
+
+  condition_phone_verification:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{verify_phone_number.data.data.verified}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 422
+          save_global:
+            status_code: 422
+            message: "Phone number verification failed"
+            error_code: "USER_003"
+            details: ${{verify_phone_number.data.data.error_message}}
+    defaultTasK: validate_identity_document
+
+  validate_identity_document:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        nik: ${{startEvent.Body.nik}}
+        full_name: ${{startEvent.Body.full_name}}
+        birth_date: ${{startEvent.Body.birth_date}}
+        document_image: ${{startEvent.Body.document_image}}
+    targetRef: 
+      - condition_identity_validation
+    worker: middleware
+
+  condition_identity_validation:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{validate_identity_document.data.data.document_valid}}
+        - ${{validate_identity_document.data.data.identity_match}}
+      value:
+        - case:
+          - false
+          - false
+          target: ibridge-reply
+          status_code: 422
+          save_global:
+            status_code: 422
+            message: "Identity document validation failed"
+            error_code: "USER_004"
+            details: ${{validate_identity_document.data.data.validation_errors}}
+    defaultTasK: assess_risk_profile
+
+  assess_risk_profile:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        user_id: ${{startEvent.Body.user_id}}
+        email: ${{startEvent.Body.email}}
+        phone: ${{startEvent.Body.phone}}
+        nik: ${{startEvent.Body.nik}}
+        ip_address: ${{startEvent.Header.X-Real-IP}}
+        user_agent: ${{startEvent.Header.User-Agent}}
+        email_score: ${{check_email_validity.data.data.trust_score}}
+        phone_score: ${{verify_phone_number.data.data.trust_score}}
+        identity_score: ${{validate_identity_document.data.data.trust_score}}
+    targetRef: 
+      - condition_risk_assessment
+    worker: middleware
+
+  condition_risk_assessment:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{assess_risk_profile.data.data.risk_level}}
+      value:
+        - case:
+          - "HIGH"
+          target: ibridge-reply
+          status_code: 403
+          save_global:
+            status_code: 403
+            message: "High risk profile detected"
+            error_code: "USER_005"
+            risk_factors: ${{assess_risk_profile.data.data.risk_factors}}
+        - case:
+          - "MEDIUM"
+          target: require_manual_review
+          save_global:
+            requires_review: true
+            review_reason: "Medium risk profile"
+    defaultTasK: create_user_profile
+
+  require_manual_review:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        user_id: ${{startEvent.Body.user_id}}
+        verification_data:
+          email_check: ${{check_email_validity.data}}
+          phone_verification: ${{verify_phone_number.data}}
+          identity_validation: ${{validate_identity_document.data}}
+          risk_assessment: ${{assess_risk_profile.data}}
+        review_priority: "MEDIUM"
+    targetRef: 
+      - ibridge-reply
+    worker: middleware
+
+  create_user_profile:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        user_id: ${{startEvent.Body.user_id}}
+        email: ${{startEvent.Body.email}}
+        phone: ${{startEvent.Body.phone}}
+        nik: ${{startEvent.Body.nik}}
+        full_name: ${{startEvent.Body.full_name}}
+        verification_status: "APPROVED"
+        trust_score: ${{assess_risk_profile.data.data.overall_score}}
+        verification_timestamp: ${{ibridge.timestamp}}
+    targetRef: 
+      - send_welcome_notification
+    worker: middleware
+
+  send_welcome_notification:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        user_id: ${{startEvent.Body.user_id}}
+        email: ${{startEvent.Body.email}}
+        phone: ${{startEvent.Body.phone}}
+        full_name: ${{startEvent.Body.full_name}}
+        notification_type: "welcome"
+        channels: ["email", "sms"]
+    targetRef: 
+      - ibridge-reply
+    worker: middleware
+  
+  ibridge-reply:
+    endParsing: Separated
+    sourceRef: 
+      verification_status: ${{ibridge.global.status_code}}
+      user_profile: ${{create_user_profile.data}}
+      verification_details:
+        request_validation: ${{validate_request.data}}
+        email_check: ${{check_email_validity.data}}
+        phone_verification: ${{verify_phone_number.data}}
+        identity_validation: ${{validate_identity_document.data}}
+        risk_assessment: ${{assess_risk_profile.data}}
+      notifications: ${{send_welcome_notification.data}}
+      manual_review: ${{require_manual_review.data}}
+      error_details: ${{ibridge.global.message}}
+      error_code: ${{ibridge.global.error_code}}
+    type: endEvent
+    taskRef: ibridge-reply

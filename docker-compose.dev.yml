@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: ces-postgres
+    environment:
+      POSTGRES_DB: ces_orchestrator
+      POSTGRES_USER: ces_user
+      POSTGRES_PASSWORD: ces_password
+    ports:
+      - "5433:5432"  # Using port 5433 to avoid conflict
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ces_user -d ces_orchestrator"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ces-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ces_user
+      RABBITMQ_DEFAULT_PASS: ces_password
+    ports:
+      - "5673:5672"   # Using port 5673 to avoid conflict
+      - "15673:15672"  # Management UI on port 15673
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ces-redis
+    command: redis-server --requirepass ces_password
+    ports:
+      - "6380:6379"  # Using port 6380 to avoid conflict
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "ces_password", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  redis_data:

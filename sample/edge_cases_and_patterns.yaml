@@ -1,0 +1,809 @@
+# ============================================================================
+# EDGE CASES AND ADVANCED PATTERNS
+# ============================================================================
+# This file demonstrates edge cases, gotchas, and advanced patterns
+# that developers should be aware of when building workflows.
+# ============================================================================
+
+# ============================================================================
+# PATTERN 1: EARLY TERMINATION (Input Validation)
+# ============================================================================
+# Pattern: Validate early, fail fast
+# Use case: Stop processing immediately if input is invalid
+name: early_termination_pattern
+requestType: early_termination
+path: /api/ibridge/v1/patterns/early-termination
+method: POST
+startEvent:
+  targetRef: validate_required_fields
+
+serviceTask:
+  validate_required_fields:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        required_fields: ["email", "phone", "address"]
+    targetRef:
+      - condition_required_fields
+    worker: middleware
+
+  condition_required_fields:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{validate_required_fields.data.data.has_all_required}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 400
+          save_global:
+            status_code: 400
+            message: "Missing required fields"
+            missing_fields: ${{validate_required_fields.data.data.missing_fields}}
+    defaultTasK: process_request
+
+  process_request:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body: ${{startEvent.Body}}
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      result: ${{process_request.data}}
+      error: ${{ibridge.global.message}}
+
+---
+
+# ============================================================================
+# PATTERN 2: CIRCUIT BREAKER (External Service Fallback)
+# ============================================================================
+# Pattern: Try primary service, fall back to secondary if it fails
+# Use case: High availability, resilience against external failures
+name: circuit_breaker_pattern
+requestType: circuit_breaker
+path: /api/ibridge/v1/patterns/circuit-breaker
+method: POST
+startEvent:
+  targetRef: call_primary_service
+
+serviceTask:
+  call_primary_service:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        request_data: ${{startEvent.Body}}
+        service: "primary"
+    targetRef:
+      - condition_primary_service
+    worker: middleware
+
+  condition_primary_service:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{call_primary_service.data.data.success}}
+      value:
+        - case:
+          - false
+          target: call_secondary_service
+          save_global:
+            primary_service_failed: true
+            primary_error: ${{call_primary_service.data.data.error}}
+    defaultTasK: ibridge-reply
+
+  call_secondary_service:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        request_data: ${{startEvent.Body}}
+        service: "secondary"
+        fallback_reason: ${{ibridge.global.primary_error}}
+    targetRef:
+      - condition_secondary_service
+    worker: middleware
+
+  condition_secondary_service:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{call_secondary_service.data.data.success}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 503
+          save_global:
+            status_code: 503
+            message: "All services unavailable"
+            primary_error: ${{ibridge.global.primary_error}}
+            secondary_error: ${{call_secondary_service.data.data.error}}
+    defaultTasK: ibridge-reply
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      result:
+        data: ${{call_primary_service.data.data.result}}
+        fallback_data: ${{call_secondary_service.data.data.result}}
+        used_fallback: ${{ibridge.global.primary_service_failed}}
+      error_details:
+        message: ${{ibridge.global.message}}
+        primary_error: ${{ibridge.global.primary_error}}
+        secondary_error: ${{ibridge.global.secondary_error}}
+
+---
+
+# ============================================================================
+# PATTERN 3: SAGA PATTERN (Distributed Transaction with Compensation)
+# ============================================================================
+# Pattern: Multi-step transaction with rollback capability
+# Use case: Booking systems, order processing, financial transactions
+name: saga_pattern
+requestType: saga_pattern
+path: /api/ibridge/v1/patterns/saga
+method: POST
+startEvent:
+  targetRef: reserve_inventory
+
+serviceTask:
+  # Step 1: Reserve inventory
+  reserve_inventory:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        product_id: ${{startEvent.Body.product_id}}
+        quantity: ${{startEvent.Body.quantity}}
+    targetRef:
+      - condition_inventory_reserved
+    worker: middleware
+
+  condition_inventory_reserved:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{reserve_inventory.data.data.reserved}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 409
+          save_global:
+            status_code: 409
+            message: "Inventory not available"
+    defaultTasK: process_payment
+
+  # Step 2: Process payment
+  process_payment:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        amount: ${{startEvent.Body.amount}}
+        reservation_id: ${{reserve_inventory.data.data.reservation_id}}
+    targetRef:
+      - condition_payment_processed
+    worker: middleware
+
+  condition_payment_processed:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{process_payment.data.data.success}}
+      value:
+        - case:
+          - false
+          # Compensation: Release inventory
+          target: compensate_release_inventory
+          save_global:
+            payment_failed: true
+            payment_error: ${{process_payment.data.data.error}}
+    defaultTasK: create_order
+
+  # Step 3: Create order
+  create_order:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        product_id: ${{startEvent.Body.product_id}}
+        quantity: ${{startEvent.Body.quantity}}
+        reservation_id: ${{reserve_inventory.data.data.reservation_id}}
+        payment_id: ${{process_payment.data.data.payment_id}}
+    targetRef:
+      - condition_order_created
+    worker: middleware
+
+  condition_order_created:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{create_order.data.data.success}}
+      value:
+        - case:
+          - false
+          # Compensation: Refund and release inventory
+          target: compensate_refund_payment
+          save_global:
+            order_creation_failed: true
+            order_error: ${{create_order.data.data.error}}
+    defaultTasK: ibridge-reply
+
+  # Compensation Step 1: Release inventory
+  compensate_release_inventory:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        reservation_id: ${{reserve_inventory.data.data.reservation_id}}
+        reason: "payment_failed"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  # Compensation Step 2: Refund payment
+  compensate_refund_payment:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        payment_id: ${{process_payment.data.data.payment_id}}
+        reason: "order_creation_failed"
+    targetRef:
+      - compensate_release_inventory_after_refund
+    worker: middleware
+
+  compensate_release_inventory_after_refund:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        reservation_id: ${{reserve_inventory.data.data.reservation_id}}
+        reason: "saga_compensation"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      success: true
+      order:
+        order_id: ${{create_order.data.data.order_id}}
+        status: ${{create_order.data.data.status}}
+      compensation:
+        payment_failed: ${{ibridge.global.payment_failed}}
+        order_creation_failed: ${{ibridge.global.order_creation_failed}}
+        refunded: ${{compensate_refund_payment.data.data.refunded}}
+        inventory_released: ${{compensate_release_inventory.data.data.released}}
+
+---
+
+# ============================================================================
+# PATTERN 4: AGGREGATION (Fan-Out/Fan-In)
+# ============================================================================
+# Pattern: Call multiple services in parallel, aggregate results
+# Use case: Price comparison, multi-source data gathering
+name: aggregation_pattern
+requestType: aggregation
+path: /api/ibridge/v1/patterns/aggregation
+method: POST
+startEvent:
+  targetRef: start_parallel_fetch
+
+serviceTask:
+  start_parallel_fetch:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        parallel_mode: true
+    targetRef:
+      - fetch_from_source_a
+      - fetch_from_source_b
+      - fetch_from_source_c
+    worker: middleware
+
+  # Parallel calls to different sources
+  fetch_from_source_a:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        query: ${{startEvent.Body.query}}
+        source: "A"
+    targetRef:
+      - aggregate_results
+    worker: middleware
+
+  fetch_from_source_b:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        query: ${{startEvent.Body.query}}
+        source: "B"
+    targetRef:
+      - aggregate_results
+    worker: middleware
+
+  fetch_from_source_c:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        query: ${{startEvent.Body.query}}
+        source: "C"
+    targetRef:
+      - aggregate_results
+    worker: middleware
+
+  # Aggregate all results
+  aggregate_results:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        source_a: ${{fetch_from_source_a.data}}
+        source_b: ${{fetch_from_source_b.data}}
+        source_c: ${{fetch_from_source_c.data}}
+        aggregation_strategy: "merge"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      aggregated_results: ${{aggregate_results.data.data.merged_results}}
+      individual_sources:
+        source_a: ${{fetch_from_source_a.data}}
+        source_b: ${{fetch_from_source_b.data}}
+        source_c: ${{fetch_from_source_c.data}}
+
+---
+
+# ============================================================================
+# GOTCHA 1: UPPERCASE K IN defaultTasK
+# ============================================================================
+# ⚠️ IMPORTANT: It's "defaultTasK" with uppercase K, not "defaultTask"
+name: gotcha_default_task
+requestType: gotcha_default_task
+path: /api/ibridge/v1/gotchas/default-task
+method: POST
+startEvent:
+  targetRef: check_something
+
+serviceTask:
+  check_something:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{startEvent.Body.value}}
+      value:
+        - case:
+          - "special"
+          target: special_handler
+    # ✅ CORRECT: defaultTasK with uppercase K
+    defaultTasK: normal_handler
+    # ❌ WRONG: defaultTask (lowercase k) - this won't work!
+
+  special_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        handler: "special"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  normal_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        handler: "normal"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Combined
+    sourceRef:
+      result: "ok"
+
+---
+
+# ============================================================================
+# GOTCHA 2: Variable Scope Visibility
+# ============================================================================
+# Variables from skipped tasks are not available
+name: gotcha_variable_scope
+requestType: gotcha_variable_scope
+path: /api/ibridge/v1/gotchas/variable-scope
+method: POST
+startEvent:
+  targetRef: condition_route
+
+serviceTask:
+  condition_route:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{startEvent.Body.route}}
+      value:
+        - case:
+          - "A"
+          target: route_a_handler
+        - case:
+          - "B"
+          target: route_b_handler
+    defaultTasK: ibridge-reply
+
+  route_a_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        route: "A"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  route_b_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        route: "B"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      route_a_result: ${{route_a_handler.data}}  # ⚠️ Will be null if route B was taken
+      route_b_result: ${{route_b_handler.data}}  # ⚠️ Will be null if route A was taken
+      # ✅ SOLUTION: Use global variables or check in conditional which route was taken
+
+---
+
+# ============================================================================
+# GOTCHA 3: Numeric Comparison String Format
+# ============================================================================
+# Numeric comparisons must be strings with operators
+name: gotcha_numeric_comparison
+requestType: gotcha_numeric_comparison
+path: /api/ibridge/v1/gotchas/numeric-comparison
+method: POST
+startEvent:
+  targetRef: check_amount
+
+serviceTask:
+  check_amount:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        amount: ${{startEvent.Body.amount}}
+    targetRef:
+      - condition_amount
+    worker: middleware
+
+  condition_amount:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{check_amount.data.data.amount}}
+      value:
+        # ✅ CORRECT: String with operator
+        - case:
+          - ">1000"
+          target: high_amount_handler
+        # ✅ CORRECT: Other operators
+        - case:
+          - "<100"
+          target: low_amount_handler
+        # ❌ WRONG: Numeric value without operator
+        # - case:
+        #   - 1000  # This won't work!
+    defaultTasK: normal_amount_handler
+
+  high_amount_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        tier: "high"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  low_amount_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        tier: "low"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  normal_amount_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        tier: "normal"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Combined
+    sourceRef:
+      result: "ok"
+
+---
+
+# ============================================================================
+# GOTCHA 4: Multiple Conditions AND Logic
+# ============================================================================
+# Multiple variableCheck entries create AND conditions
+name: gotcha_and_logic
+requestType: gotcha_and_logic
+path: /api/ibridge/v1/gotchas/and-logic
+method: POST
+startEvent:
+  targetRef: check_conditions
+
+serviceTask:
+  check_conditions:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - condition_multiple_checks
+    worker: middleware
+
+  condition_multiple_checks:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{check_conditions.data.data.is_verified}}
+        - ${{check_conditions.data.data.has_balance}}
+      value:
+        # ✅ This case triggers when BOTH conditions match (AND logic)
+        # is_verified == true AND has_balance == true
+        - case:
+          - true
+          - true
+          target: approved_handler
+        # ⚠️ For OR logic, create separate conditional tasks
+    defaultTasK: rejected_handler
+
+  approved_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        status: "approved"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  rejected_handler:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        status: "rejected"
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Combined
+    sourceRef:
+      result: "ok"
+
+---
+
+# ============================================================================
+# EDGE CASE: Empty Worker Response Handling
+# ============================================================================
+name: edge_empty_response
+requestType: edge_empty_response
+path: /api/ibridge/v1/edge/empty-response
+method: POST
+startEvent:
+  targetRef: call_worker_might_be_empty
+
+serviceTask:
+  call_worker_might_be_empty:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - condition_check_response
+    worker: middleware
+
+  # ✅ BEST PRACTICE: Always check if worker response exists
+  condition_check_response:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{call_worker_might_be_empty.data.data.exists}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 404
+          save_global:
+            status_code: 404
+            message: "Resource not found"
+    defaultTasK: process_response
+
+  process_response:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        data: ${{call_worker_might_be_empty.data}}
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      result: ${{process_response.data}}
+      error: ${{ibridge.global.message}}
+
+---
+
+# ============================================================================
+# ADVANCED: Dynamic Worker Selection
+# ============================================================================
+# Select worker based on runtime conditions
+name: dynamic_worker_selection
+requestType: dynamic_worker
+path: /api/ibridge/v1/advanced/dynamic-worker
+method: POST
+startEvent:
+  targetRef: determine_processor
+
+serviceTask:
+  determine_processor:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        transaction_type: ${{startEvent.Body.transaction_type}}
+    targetRef:
+      - condition_select_processor
+    worker: middleware
+
+  condition_select_processor:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{determine_processor.data.data.processor_type}}
+      value:
+        - case:
+          - "payment"
+          target: payment_processor
+        - case:
+          - "refund"
+          target: refund_processor
+        - case:
+          - "transfer"
+          target: transfer_processor
+    defaultTasK: ibridge-reply
+
+  # Different processors for different transaction types
+  payment_processor:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body: ${{startEvent.Body}}
+    targetRef:
+      - ibridge-reply
+    worker: payment_worker
+
+  refund_processor:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body: ${{startEvent.Body}}
+    targetRef:
+      - ibridge-reply
+    worker: refund_worker
+
+  transfer_processor:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body: ${{startEvent.Body}}
+    targetRef:
+      - ibridge-reply
+    worker: transfer_worker
+
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Combined
+    sourceRef:
+      payment_result: ${{payment_processor.data}}
+      refund_result: ${{refund_processor.data}}
+      transfer_result: ${{transfer_processor.data}}
+
+# ============================================================================

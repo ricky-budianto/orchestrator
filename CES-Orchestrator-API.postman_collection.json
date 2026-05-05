@@ -1,0 +1,794 @@
+{
+	"info": {
+		"_postman_id": "ces-orchestrator-api-collection",
+		"name": "CES Orchestrator Service API",
+		"description": "Complete API collection for CES-iBridge Orchestrator Service testing",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{auth_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "workflow_config_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "workflow_history_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health Check",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Metrics",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/metrics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"metrics"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Workflow Configurations",
+			"item": [
+				{
+					"name": "Create Workflow Configuration",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200 || pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.id) {",
+									"        pm.collectionVariables.set('workflow_config_id', response.data.id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"demo_flow_v2\",\n  \"name\": \"Demo Flow V2\",\n  \"path\": \"/api/ibridge/v1/demo-flow-v2\",\n  \"method\": \"POST\",\n  \"descriptions\": \"Demo workflow for testing orchestration\",\n  \"configuration\": \"name: demo_flow_v2\\nrequestType: demo_flow_v2\\npath: /api/ibridge/v1/demo-flow-v2\\nmethod: POST\\nstartEvent:\\n  targetRef: demo_check_email\\n\\nserviceTask:\\n  demo_check_email:\\n    type: worker\\n    sourceRefParsing: ${{ibridge.httprequest}}\\n    sourceRef:\\n      authorization: ${{startEvent.Authorization}}\\n      body:\\n        email: ${{startEvent.Body.email}}\\n    targetRef:\\n      - condition_demo_check_email\\n    worker: middleware\\n\\n  condition_demo_check_email:\\n    type: conditional\\n    condition:\\n      variableCheck:\\n        - ${{demo_check_email.data.data.disposable_email}}\\n      value:\\n        - case:\\n          - true\\n          target: ibridge-reply\\n          status_code: 400\\n          save_global:\\n            status_code: 400\\n            message: \\\"Invalid email\\\"\\n            error_code: \\\"5001\\\"\\n    defaultTask: demo_get_result\\n\\n  demo_get_result:\\n    type: worker\\n    sourceRefParsing: ${{ibridge.httprequest}}\\n    sourceRef:\\n      authorization: ${{startEvent.Authorization}}\\n      body:\\n        email_score: ${{demo_check_email.data.data.score}}\\n        processed_at: ${{demo_check_email.data.timestamp}}\\n    targetRef:\\n      - ibridge-reply\\n    worker: middleware\\n\\n  ibridge-reply:\\n    endParsing: Separated\\n    sourceRef:\\n      step_check_email: ${{demo_check_email.data}}\\n      step_get_result: ${{demo_get_result.data}}\\n    type: endEvent\\n    taskRef: ibridge-reply\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_configuration",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_configuration"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Workflow Configurations",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_configuration",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_configuration"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow Configuration by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_configuration/{{workflow_config_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_configuration",
+								"{{workflow_config_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Update Workflow Configuration",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"{{workflow_config_id}}\",\n  \"name\": \"Demo Flow V2 - Updated\",\n  \"path\": \"/api/ibridge/v1/demo-flow-v2\",\n  \"method\": \"POST\",\n  \"descriptions\": \"Updated demo workflow for testing orchestration\",\n  \"configuration\": \"name: demo_flow_v2\\nrequestType: demo_flow_v2\\npath: /api/ibridge/v1/demo-flow-v2\\nmethod: POST\\nstartEvent:\\n  targetRef: demo_check_email\\n\\nserviceTask:\\n  demo_check_email:\\n    type: worker\\n    sourceRefParsing: ${{ibridge.httprequest}}\\n    sourceRef:\\n      authorization: ${{startEvent.Authorization}}\\n      body:\\n        email: ${{startEvent.Body.email}}\\n    targetRef:\\n      - ibridge-reply\\n    worker: middleware\\n\\n  ibridge-reply:\\n    endParsing: Separated\\n    sourceRef:\\n      step_check_email: ${{demo_check_email.data}}\\n    type: endEvent\\n    taskRef: ibridge-reply\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_configuration",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_configuration"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delete Workflow Configuration",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"{{workflow_config_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_configuration",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_configuration"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Workflow Execution",
+			"item": [
+				{
+					"name": "Execute Workflow (V1 - Static Path)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    console.log('Workflow execution completed:', response);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test@gmail.com\",\n  \"penghasilan\": \"30000000\",\n  \"nik\": \"320124019281871891\",\n  \"social_media_url\": \"google.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/demo-flow-v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"demo-flow-v2"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Execute Workflow (V2 - Dynamic Routing)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    console.log('Dynamic workflow execution completed:', response);",
+									"    if (response.workflow_history_id) {",
+									"        pm.collectionVariables.set('workflow_history_id', response.workflow_history_id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{auth_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"john.doe@example.com\",\n  \"penghasilan\": \"25000000\",\n  \"nik\": \"320124019281871892\",\n  \"social_media_url\": \"linkedin.com/in/johndoe\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/{{workflow_config_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"{{workflow_config_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Execute Simple Test Workflow",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"test_data\": \"simple_test\",\n  \"timestamp\": \"{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Workflow History",
+			"item": [
+				{
+					"name": "Get All Workflow History",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_history",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_history"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow History by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_history/{{workflow_history_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_history",
+								"{{workflow_history_id}}"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow History with Query",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_history?workflow_configuration_id={{workflow_config_id}}&status=EXECUTED&limit=10",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_history"
+							],
+							"query": [
+								{
+									"key": "workflow_configuration_id",
+									"value": "{{workflow_config_id}}"
+								},
+								{
+									"key": "status",
+									"value": "EXECUTED"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Workflow States",
+			"item": [
+				{
+					"name": "Get All Workflow States",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_state",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_state"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow State by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_state/WS_uuid_1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_state",
+								"WS_uuid_1"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Workflow States with Query",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v1/workflow_state?workflow_id={{workflow_history_id}}&workflow_request_type={{workflow_config_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v1",
+								"workflow_state"
+							],
+							"query": [
+								{
+									"key": "workflow_id",
+									"value": "{{workflow_history_id}}"
+								},
+								{
+									"key": "workflow_request_type",
+									"value": "{{workflow_config_id}}"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Test Scenarios",
+			"item": [
+				{
+					"name": "Scenario 1: Valid Email Test",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"valid.email@company.com\",\n  \"penghasilan\": \"50000000\",\n  \"nik\": \"320124019281871893\",\n  \"social_media_url\": \"linkedin.com/in/validuser\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Scenario 2: Disposable Email Test",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test@10minutemail.com\",\n  \"penghasilan\": \"15000000\",\n  \"nik\": \"320124019281871894\",\n  \"social_media_url\": \"facebook.com/testuser\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Scenario 3: High Income Test",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"executive@enterprise.com\",\n  \"penghasilan\": \"100000000\",\n  \"nik\": \"320124019281871895\",\n  \"social_media_url\": \"linkedin.com/in/executive\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Scenario 4: Low Income Test",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"student@university.edu\",\n  \"penghasilan\": \"5000000\",\n  \"nik\": \"320124019281871896\",\n  \"social_media_url\": \"instagram.com/student\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Error Testing",
+			"item": [
+				{
+					"name": "Test Invalid Workflow ID",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"test@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/nonexistent_workflow",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"nonexistent_workflow"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Test Empty Body",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Test Invalid JSON",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{ invalid json }"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Load Testing",
+			"item": [
+				{
+					"name": "Concurrent Request Test",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"load.test.{{$randomInt}}@example.com\",\n  \"penghasilan\": \"{{$randomInt}}\",\n  \"nik\": \"32012401928187{{$randomInt}}\",\n  \"social_media_url\": \"social.com/user{{$randomInt}}\",\n  \"request_id\": \"{{$guid}}\",\n  \"timestamp\": \"{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/ibridge/v2/orchestrate/demo_flow_v2",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"ibridge",
+								"v2",
+								"orchestrate",
+								"demo_flow_v2"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}

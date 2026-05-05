@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-config
+  namespace: ces-orchestrator
+data:
+  # Application Configuration
+  PROJECT_NAME: "ces-orchestrator"
+  PROJECT_MODULE: "ces-orchestrator-service"
+  APP_PORT: "8081"
+  LOG_LEVEL: "INFO"
+  DB_PROVIDER: "postgresql"
+  LOCALE_LANGUAGE: "en"
+  TIMEZONE: "Asia/Jakarta"
+  MODULE_VERSION: "1.0.0"
+  ENVIRONMENT: "production"
+
+  # Redis Configuration
+  REDIS_USE: "true"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_TLS_ENABLED: "false"
+
+  # PostgreSQL Configuration
+  POSTGRE_SQL_HOST: "postgres-service"
+  POSTGRE_SQL_PORT: "5432"
+  POSTGRE_SQL_DB_NAME: "ces_orchestrator"
+  POSTGRE_SQL_MAX_OPEN_CONNECTION: "25"
+  POSTGRE_SQL_MAX_IDLE_CONNECTION: "10"
+
+  # RabbitMQ Configuration
+  RABBITMQURL: "amqp://guest:guest@rabbitmq-service:5672/"
+  RABBITMQ_QUEUE: "ces-orchestrator"
+
+  # Telemetry Configuration
+  TELEMETRY_ENABLED: "true"
+  TEMPO_ENDPOINT: "tempo-service:4318"
+  PROMETHEUS_PORT: "8081"
+
+  # Retention Configuration
+  RETENTION_LOG: "30"
+  CRON_CLEANUP_WORKFLOW: "0 2 * * *"

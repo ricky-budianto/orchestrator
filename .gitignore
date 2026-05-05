@@ -1,0 +1,9 @@
+sit-1b.env
+/.vscode
+/config.env
+.idea
+/vendor/*
+.claude
+
+# MCP workflow specs (local development only)
+.spec-workflow/

@@ -1,0 +1,302 @@
+# ============================================================================
+# END PARSING TYPES DEMONSTRATION
+# ============================================================================
+# This file demonstrates the three types of endParsing options and their
+# differences in response formatting.
+#
+# endParsing Types:
+# 1. "Separated" - Returns each sourceRef field as separate response fields
+# 2. "Combined" - Merges all sourceRef fields into a single combined object
+# 3. "raw" - Returns the sourceRef data as-is without any processing
+# ============================================================================
+
+# ============================================================================
+# EXAMPLE 1: SEPARATED (Most Common)
+# ============================================================================
+# Configuration:
+name: endparsing_separated_example
+requestType: endparsing_separated
+path: /api/ibridge/v1/endparsing/separated
+method: POST
+startEvent:
+  targetRef: get_user_data
+
+serviceTask:
+  get_user_data:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - get_transaction_history
+    worker: middleware
+
+  get_transaction_history:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - ibridge-reply-separated
+    worker: middleware
+
+  ibridge-reply-separated:
+    type: endEvent
+    taskRef: ibridge-reply-separated
+    endParsing: Separated
+    sourceRef:
+      user_info:
+        user_id: ${{get_user_data.data.data.user_id}}
+        name: ${{get_user_data.data.data.name}}
+        email: ${{get_user_data.data.data.email}}
+      transactions:
+        total_count: ${{get_transaction_history.data.data.count}}
+        recent_transactions: ${{get_transaction_history.data.data.transactions}}
+      metadata:
+        timestamp: ${{ibridge.timestamp}}
+        request_id: ${{get_user_data.data.data.request_id}}
+
+# Response Format with "Separated":
+# {
+#   "user_info": {
+#     "user_id": "12345",
+#     "name": "John Doe",
+#     "email": "john@example.com"
+#   },
+#   "transactions": {
+#     "total_count": 50,
+#     "recent_transactions": [...]
+#   },
+#   "metadata": {
+#     "timestamp": "2025-10-05T12:00:00Z",
+#     "request_id": "req_123"
+#   }
+# }
+
+---
+
+# ============================================================================
+# EXAMPLE 2: COMBINED (Merged Response)
+# ============================================================================
+# Configuration:
+name: endparsing_combined_example
+requestType: endparsing_combined
+path: /api/ibridge/v1/endparsing/combined
+method: POST
+startEvent:
+  targetRef: get_user_data_combined
+
+serviceTask:
+  get_user_data_combined:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - get_transaction_history_combined
+    worker: middleware
+
+  get_transaction_history_combined:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - ibridge-reply-combined
+    worker: middleware
+
+  ibridge-reply-combined:
+    type: endEvent
+    taskRef: ibridge-reply-combined
+    endParsing: Combined
+    sourceRef:
+      user_id: ${{get_user_data_combined.data.data.user_id}}
+      name: ${{get_user_data_combined.data.data.name}}
+      email: ${{get_user_data_combined.data.data.email}}
+      total_count: ${{get_transaction_history_combined.data.data.count}}
+      recent_transactions: ${{get_transaction_history_combined.data.data.transactions}}
+      timestamp: ${{ibridge.timestamp}}
+      request_id: ${{get_user_data_combined.data.data.request_id}}
+
+# Response Format with "Combined":
+# {
+#   "user_id": "12345",
+#   "name": "John Doe",
+#   "email": "john@example.com",
+#   "total_count": 50,
+#   "recent_transactions": [...],
+#   "timestamp": "2025-10-05T12:00:00Z",
+#   "request_id": "req_123"
+# }
+# All fields are merged into a single flat object
+
+---
+
+# ============================================================================
+# EXAMPLE 3: RAW (Unprocessed Response)
+# ============================================================================
+# Configuration:
+name: endparsing_raw_example
+requestType: endparsing_raw
+path: /api/ibridge/v1/endparsing/raw
+method: POST
+startEvent:
+  targetRef: get_user_data_raw
+
+serviceTask:
+  get_user_data_raw:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - get_transaction_history_raw
+    worker: middleware
+
+  get_transaction_history_raw:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+    targetRef:
+      - ibridge-reply-raw
+    worker: middleware
+
+  ibridge-reply-raw:
+    type: endEvent
+    taskRef: ibridge-reply-raw
+    endParsing: raw
+    sourceRef:
+      user_info:
+        user_id: ${{get_user_data_raw.data.data.user_id}}
+        name: ${{get_user_data_raw.data.data.name}}
+        email: ${{get_user_data_raw.data.data.email}}
+      transactions:
+        total_count: ${{get_transaction_history_raw.data.data.count}}
+        recent_transactions: ${{get_transaction_history_raw.data.data.transactions}}
+
+# Response Format with "raw":
+# The exact structure of sourceRef is returned without any transformation
+# {
+#   "user_info": {
+#     "user_id": "12345",
+#     "name": "John Doe",
+#     "email": "john@example.com"
+#   },
+#   "transactions": {
+#     "total_count": 50,
+#     "recent_transactions": [...]
+#   }
+# }
+
+---
+
+# ============================================================================
+# COMPARISON SUMMARY
+# ============================================================================
+#
+# When to use each type:
+#
+# 1. SEPARATED (Recommended for most cases)
+#    ✓ Best for structured, organized responses
+#    ✓ Clear separation of different data domains
+#    ✓ Easy for frontend to consume
+#    ✓ Good for complex responses with multiple sections
+#
+# 2. COMBINED
+#    ✓ Best for simple, flat responses
+#    ✓ When all fields are at the same level
+#    ✓ Simpler response structure
+#    ✓ Good for backward compatibility
+#
+# 3. RAW
+#    ✓ Best when you need exact control over response structure
+#    ✓ When sourceRef is already properly formatted
+#    ✓ No additional processing needed
+#    ✓ Good for pass-through responses
+#
+# ============================================================================
+
+---
+
+# ============================================================================
+# ADVANCED: DYNAMIC RESPONSE BASED ON CONDITION
+# ============================================================================
+# You can have different endParsing types in different end events
+name: dynamic_endparsing_example
+requestType: dynamic_endparsing
+path: /api/ibridge/v1/endparsing/dynamic
+method: POST
+startEvent:
+  targetRef: check_response_format
+
+serviceTask:
+  check_response_format:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        # Client can request format
+        response_format: ${{startEvent.Body.response_format}}
+    targetRef:
+      - condition_response_format
+    worker: middleware
+
+  condition_response_format:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{check_response_format.data.data.format_preference}}
+      value:
+        - case:
+          - "detailed"
+          target: ibridge-reply-detailed
+        - case:
+          - "simple"
+          target: ibridge-reply-simple
+    defaultTasK: ibridge-reply-default
+
+  # Detailed response with Separated format
+  ibridge-reply-detailed:
+    type: endEvent
+    taskRef: ibridge-reply-detailed
+    endParsing: Separated
+    sourceRef:
+      user:
+        user_id: ${{check_response_format.data.data.user_id}}
+        details: ${{check_response_format.data.data.user_details}}
+      meta:
+        format: "detailed"
+        timestamp: ${{ibridge.timestamp}}
+
+  # Simple response with Combined format
+  ibridge-reply-simple:
+    type: endEvent
+    taskRef: ibridge-reply-simple
+    endParsing: Combined
+    sourceRef:
+      user_id: ${{check_response_format.data.data.user_id}}
+      format: "simple"
+
+  # Default response with raw format
+  ibridge-reply-default:
+    type: endEvent
+    taskRef: ibridge-reply-default
+    endParsing: raw
+    sourceRef: ${{check_response_format.data}}
+
+# ============================================================================

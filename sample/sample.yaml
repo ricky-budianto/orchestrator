@@ -1,0 +1,100 @@
+# Demo Flow
+#
+# 
+
+name: demo_flow
+requestType: demo_flow
+path: /api/ibridge/v1/demo-flow
+method: POST
+startEvent:
+  targetRef: demo_check_email
+
+serviceTask:
+  demo_check_email:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        email: ${{startEvent.Body.email}}
+    targetRef: 
+      - condition_demo_check_email
+    worker : middleware
+  
+  condition_demo_check_email:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{demo_check_email.data.data.disposable_email}}
+      value:
+        - case:
+          - true
+          target: ibridge-reply
+          status_code: 400
+          save_global:
+            status_code: 400
+            message: "Invalid request"
+            error_code: "5001"
+    defaultTasK: demo_check_penghasilan
+
+  demo_check_penghasilan:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        penghasilan: ${{startEvent.Body.penghasilan}}
+    targetRef: 
+      - condition_demo_check_penghasilan
+    worker : middleware
+  
+  condition_demo_check_penghasilan:
+    type: conditional
+    condition: 
+      variableCheck:
+        - ${{demo_check_penghasilan.data.data.reject}}
+      value:
+        - case:
+          - true
+          target: ibridge-reply
+          status_code: 400
+          save_global:
+            status_code: 400
+            message: "Invalid request"
+            error_code: "5001"
+    defaultTasK: demo_check_nik_socmed
+
+  demo_check_nik_socmed:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        nik: ${{startEvent.Body.nik}}
+        social_media_url: ${{startEvent.Body.social_media_url}}
+    targetRef: 
+      - demo_get_limit
+    worker : middleware
+
+  demo_get_limit:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef: 
+      authorization: ${{startEvent.Authorization}}
+      body: 
+        email_score: ${{demo_check_email.data.data.score}}
+        penghasilan_score: ${{demo_check_penghasilan.data.data.score}}
+        nik_socmed_score: ${{demo_check_nik_socmed.data.data.score}}
+    targetRef: 
+      - ibridge-reply
+    worker : middleware
+  
+  ibridge-reply:
+    endParsing: Separated
+    sourceRef: 
+      step_check_email: ${{demo_check_email.data}}
+      step_check_penghasilan: ${{demo_check_penghasilan.data}}
+      step_check_nik_socmed: ${{demo_check_nik_socmed.data}}
+      step_get_limit: ${{demo_get_limit.data}}
+    type: endEvent
+    taskRef: ibridge-reply

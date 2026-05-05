@@ -1,0 +1,627 @@
+# ============================================================================
+# COMPLETE WORKFLOW FEATURE DEMONSTRATION
+# ============================================================================
+# This workflow demonstrates ALL features and capabilities of the
+# CES-iBridge Orchestrator workflow system.
+#
+# Features covered:
+# 1. All task types: worker, conditional, endEvent
+# 2. All variable scopes: startEvent, worker_name, ibridge, global
+# 3. All comparison types: boolean, string, numeric, multiple conditions
+# 4. All endParsing types: Separated, Combined, raw
+# 5. Advanced patterns: parallel execution, retry/fallback, data enrichment
+# 6. Global variables and status code handling
+# 7. Error handling and validation
+# 8. All ibridge special variables
+# ============================================================================
+
+name: complete_feature_demo
+requestType: feature_demo
+path: /api/ibridge/v1/feature-demo
+method: POST
+
+# ============================================================================
+# START EVENT
+# ============================================================================
+# The entry point of the workflow. Variables from request can be accessed
+# using ${{startEvent.scope.path}}
+#
+# Available scopes:
+# - startEvent.Authorization: Authorization header
+# - startEvent.Header.{HeaderName}: Any request header
+# - startEvent.Body.{fieldName}: Request body fields
+# - startEvent.QueryParam.{paramName}: Query parameters
+# ============================================================================
+startEvent:
+  targetRef: validate_input
+
+# ============================================================================
+# SERVICE TASKS
+# ============================================================================
+serviceTask:
+
+  # ==========================================================================
+  # TASK 1: INPUT VALIDATION (Worker Task)
+  # ==========================================================================
+  # Demonstrates:
+  # - Worker type task
+  # - startEvent variable usage
+  # - sourceRefParsing with ibridge.httprequest
+  # ==========================================================================
+  validate_input:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        amount: ${{startEvent.Body.amount}}
+        # Access query parameters
+        debug_mode: ${{startEvent.QueryParam.debug}}
+        # Access headers
+        client_version: ${{startEvent.Header.X-Client-Version}}
+        # Access IP from headers (common pattern)
+        ip_address: ${{startEvent.Header.X-Real-IP}}
+    targetRef:
+      - condition_input_validation
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 1: Input Validation Check (Boolean Comparison)
+  # ==========================================================================
+  # Demonstrates:
+  # - Conditional type task
+  # - Boolean comparison
+  # - Error response with save_global
+  # - status_code override
+  # ==========================================================================
+  condition_input_validation:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{validate_input.data.data.valid}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 400
+          save_global:
+            status_code: 400
+            message: "Input validation failed"
+            error_code: "ERR_001"
+            validation_errors: ${{validate_input.data.data.errors}}
+    defaultTasK: check_user_status
+
+  # ==========================================================================
+  # TASK 2: Check User Status (Worker with worker result variables)
+  # ==========================================================================
+  # Demonstrates:
+  # - Using previous worker results: ${{worker_name.path}}
+  # - Nested data access
+  # ==========================================================================
+  check_user_status:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        # Use data from previous worker
+        validated_user_id: ${{validate_input.data.data.normalized_user_id}}
+    targetRef:
+      - condition_user_status
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 2: User Status Check (String Comparison)
+  # ==========================================================================
+  # Demonstrates:
+  # - String value comparison
+  # - Multiple case scenarios
+  # - Different targets for different cases
+  # ==========================================================================
+  condition_user_status:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{check_user_status.data.data.status}}
+      value:
+        - case:
+          - "SUSPENDED"
+          target: ibridge-reply
+          status_code: 403
+          save_global:
+            status_code: 403
+            message: "User account is suspended"
+            error_code: "ERR_002"
+            suspension_reason: ${{check_user_status.data.data.suspension_reason}}
+        - case:
+          - "INACTIVE"
+          target: ibridge-reply
+          status_code: 403
+          save_global:
+            status_code: 403
+            message: "User account is inactive"
+            error_code: "ERR_003"
+    defaultTasK: check_transaction_limit
+
+  # ==========================================================================
+  # TASK 3: Check Transaction Limit (Numeric Comparison Setup)
+  # ==========================================================================
+  check_transaction_limit:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        transaction_amount: ${{startEvent.Body.amount}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        # Pass user tier from previous check
+        user_tier: ${{check_user_status.data.data.tier}}
+    targetRef:
+      - condition_transaction_limit
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 3: Transaction Limit Check (Numeric Comparison)
+  # ==========================================================================
+  # Demonstrates:
+  # - Numeric comparison using string format ">1000000"
+  # - Conditional branching to different tasks
+  # ==========================================================================
+  condition_transaction_limit:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{check_transaction_limit.data.data.amount}}
+      value:
+        - case:
+          - ">1000000"
+          target: require_additional_verification
+          save_global:
+            requires_additional_verification: true
+            high_value_transaction: true
+    defaultTasK: parallel_checks_start
+
+  # ==========================================================================
+  # TASK 4: Additional Verification for High-Value Transactions
+  # ==========================================================================
+  require_additional_verification:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        transaction_id: ${{ibridge.timestamp}}
+        verification_type: "OTP"
+        amount: ${{startEvent.Body.amount}}
+    targetRef:
+      - condition_additional_verification
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 4: Additional Verification Result
+  # ==========================================================================
+  condition_additional_verification:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{require_additional_verification.data.data.verified}}
+      value:
+        - case:
+          - false
+          target: ibridge-reply
+          status_code: 401
+          save_global:
+            status_code: 401
+            message: "Additional verification failed"
+            error_code: "ERR_004"
+    defaultTasK: parallel_checks_start
+
+  # ==========================================================================
+  # PARALLEL EXECUTION PATTERN
+  # ==========================================================================
+  # Tasks: parallel_check_fraud, parallel_check_compliance, parallel_enrich_data
+  # These run independently and results are merged later
+  #
+  # Note: The orchestrator executes these in parallel when they don't have
+  # dependencies on each other's results
+  # ==========================================================================
+
+  # PARALLEL TASK 1: Fraud Detection
+  parallel_check_fraud:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        amount: ${{startEvent.Body.amount}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        ip_address: ${{startEvent.Header.X-Real-IP}}
+        device_fingerprint: ${{startEvent.Header.X-Device-Fingerprint}}
+        # Use ibridge.timestamp for unique request ID
+        request_id: ${{ibridge.timestamp}}
+    targetRef:
+      - merge_parallel_results
+    worker: middleware
+
+  # PARALLEL TASK 2: Compliance Check
+  parallel_check_compliance:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        amount: ${{startEvent.Body.amount}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        user_country: ${{check_user_status.data.data.country}}
+    targetRef:
+      - merge_parallel_results
+    worker: middleware
+
+  # PARALLEL TASK 3: Data Enrichment
+  parallel_enrich_data:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        enrich_fields: ["account_age", "transaction_history", "loyalty_points"]
+    targetRef:
+      - merge_parallel_results
+    worker: middleware
+
+  # Dummy task to mark parallel execution start
+  parallel_checks_start:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        parallel_execution: true
+    targetRef:
+      - parallel_check_fraud
+      - parallel_check_compliance
+      - parallel_enrich_data
+    worker: middleware
+
+  # ==========================================================================
+  # TASK 5: Merge Parallel Results (Multiple Conditions)
+  # ==========================================================================
+  # Demonstrates:
+  # - Merging results from parallel execution
+  # - Accessing multiple worker results
+  # ==========================================================================
+  merge_parallel_results:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        fraud_check: ${{parallel_check_fraud.data}}
+        compliance_check: ${{parallel_check_compliance.data}}
+        enriched_data: ${{parallel_enrich_data.data}}
+    targetRef:
+      - condition_parallel_results
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 5: Multiple Conditions Check
+  # ==========================================================================
+  # Demonstrates:
+  # - Multiple variableCheck (AND logic)
+  # - Complex decision making
+  # ==========================================================================
+  condition_parallel_results:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{parallel_check_fraud.data.data.fraud_detected}}
+        - ${{parallel_check_compliance.data.data.compliant}}
+      value:
+        # Case 1: Fraud detected (first check is true)
+        - case:
+          - true
+          - true
+          target: ibridge-reply
+          status_code: 403
+          save_global:
+            status_code: 403
+            message: "Transaction blocked - fraud detected"
+            error_code: "ERR_005"
+            fraud_score: ${{parallel_check_fraud.data.data.fraud_score}}
+            fraud_reasons: ${{parallel_check_fraud.data.data.reasons}}
+        # Case 2: Not compliant (second check is false)
+        - case:
+          - false
+          - false
+          target: ibridge-reply
+          status_code: 403
+          save_global:
+            status_code: 403
+            message: "Transaction blocked - compliance violation"
+            error_code: "ERR_006"
+            compliance_issues: ${{parallel_check_compliance.data.data.issues}}
+    defaultTasK: calculate_fees
+
+  # ==========================================================================
+  # TASK 6: Calculate Transaction Fees
+  # ==========================================================================
+  calculate_fees:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        amount: ${{startEvent.Body.amount}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        user_tier: ${{check_user_status.data.data.tier}}
+        loyalty_points: ${{parallel_enrich_data.data.data.loyalty_points}}
+    targetRef:
+      - process_transaction
+    worker: middleware
+
+  # ==========================================================================
+  # TASK 7: Process Transaction (Primary Action)
+  # ==========================================================================
+  process_transaction:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        amount: ${{startEvent.Body.amount}}
+        fee_amount: ${{calculate_fees.data.data.total_fee}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        # Use ibridge.timestamp for transaction timestamp
+        transaction_time: ${{ibridge.timestamp}}
+        # Include validation results
+        fraud_score: ${{parallel_check_fraud.data.data.fraud_score}}
+        compliance_score: ${{parallel_check_compliance.data.data.compliance_score}}
+    targetRef:
+      - condition_transaction_result
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 6: Transaction Result Check (Retry Pattern)
+  # ==========================================================================
+  # Demonstrates:
+  # - Transaction result validation
+  # - Retry/fallback pattern
+  # ==========================================================================
+  condition_transaction_result:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{process_transaction.data.data.status}}
+      value:
+        - case:
+          - "FAILED"
+          target: retry_transaction
+          save_global:
+            retry_attempt: 1
+            original_error: ${{process_transaction.data.data.error_message}}
+        - case:
+          - "PENDING"
+          target: ibridge-reply
+          status_code: 202
+          save_global:
+            status_code: 202
+            message: "Transaction is being processed"
+            transaction_id: ${{process_transaction.data.data.transaction_id}}
+    defaultTasK: send_notifications
+
+  # ==========================================================================
+  # TASK 8: Retry Transaction (Fallback Pattern)
+  # ==========================================================================
+  retry_transaction:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        amount: ${{startEvent.Body.amount}}
+        fee_amount: ${{calculate_fees.data.data.total_fee}}
+        transaction_type: ${{startEvent.Body.transaction_type}}
+        retry_attempt: ${{ibridge.global.retry_attempt}}
+        original_transaction_id: ${{process_transaction.data.data.transaction_id}}
+        use_fallback_processor: true
+    targetRef:
+      - condition_retry_result
+    worker: middleware
+
+  # ==========================================================================
+  # CONDITIONAL 7: Retry Result Check
+  # ==========================================================================
+  condition_retry_result:
+    type: conditional
+    condition:
+      variableCheck:
+        - ${{retry_transaction.data.data.status}}
+      value:
+        - case:
+          - "FAILED"
+          target: ibridge-reply
+          status_code: 500
+          save_global:
+            status_code: 500
+            message: "Transaction failed after retry"
+            error_code: "ERR_007"
+            original_error: ${{ibridge.global.original_error}}
+            retry_error: ${{retry_transaction.data.data.error_message}}
+    defaultTasK: send_notifications
+
+  # ==========================================================================
+  # TASK 9: Send Notifications (Multiple Channels)
+  # ==========================================================================
+  send_notifications:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        notification_type: "transaction_success"
+        channels: ["email", "sms", "push"]
+        transaction_data:
+          transaction_id: ${{process_transaction.data.data.transaction_id}}
+          amount: ${{startEvent.Body.amount}}
+          fee: ${{calculate_fees.data.data.total_fee}}
+          timestamp: ${{ibridge.timestamp}}
+    targetRef:
+      - update_user_profile
+    worker: middleware
+
+  # ==========================================================================
+  # TASK 10: Update User Profile (Data Enrichment)
+  # ==========================================================================
+  update_user_profile:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        user_id: ${{startEvent.Body.user_id}}
+        updates:
+          last_transaction_id: ${{process_transaction.data.data.transaction_id}}
+          last_transaction_date: ${{ibridge.timestamp}}
+          total_transactions_count: ${{parallel_enrich_data.data.data.transaction_count}}
+          loyalty_points_earned: ${{calculate_fees.data.data.loyalty_points_earned}}
+    targetRef:
+      - create_audit_log
+    worker: middleware
+
+  # ==========================================================================
+  # TASK 11: Create Audit Log (Final Processing)
+  # ==========================================================================
+  create_audit_log:
+    type: worker
+    sourceRefParsing: ${{ibridge.httprequest}}
+    sourceRef:
+      authorization: ${{startEvent.Authorization}}
+      body:
+        event_type: "TRANSACTION_COMPLETED"
+        user_id: ${{startEvent.Body.user_id}}
+        transaction_id: ${{process_transaction.data.data.transaction_id}}
+        # Include all validation steps for audit
+        validation_steps:
+          input_validation: ${{validate_input.data.data.valid}}
+          user_status: ${{check_user_status.data.data.status}}
+          fraud_check: ${{parallel_check_fraud.data.data.fraud_score}}
+          compliance_check: ${{parallel_check_compliance.data.data.compliant}}
+        # Include global variables
+        additional_verification_required: ${{ibridge.global.requires_additional_verification}}
+        timestamp: ${{ibridge.timestamp}}
+    targetRef:
+      - ibridge-reply
+    worker: middleware
+
+  # ==========================================================================
+  # END EVENT: Response Formatting
+  # ==========================================================================
+  # Demonstrates:
+  # - endEvent type
+  # - endParsing: Separated (returns each field separately)
+  # - Accessing multiple worker results
+  # - Accessing global variables
+  # - Using ibridge special variables
+  #
+  # endParsing Options:
+  # - "Separated": Returns each sourceRef field separately in response
+  # - "Combined": Merges all sourceRef fields into single object
+  # - "raw": Returns sourceRef as-is without processing
+  # ==========================================================================
+  ibridge-reply:
+    type: endEvent
+    taskRef: ibridge-reply
+    endParsing: Separated
+    sourceRef:
+      # Success flag
+      success: true
+
+      # Transaction details
+      transaction:
+        transaction_id: ${{process_transaction.data.data.transaction_id}}
+        status: ${{process_transaction.data.data.status}}
+        amount: ${{startEvent.Body.amount}}
+        fee: ${{calculate_fees.data.data.total_fee}}
+        net_amount: ${{calculate_fees.data.data.net_amount}}
+        timestamp: ${{ibridge.timestamp}}
+
+      # User information
+      user:
+        user_id: ${{startEvent.Body.user_id}}
+        status: ${{check_user_status.data.data.status}}
+        tier: ${{check_user_status.data.data.tier}}
+        loyalty_points: ${{parallel_enrich_data.data.data.loyalty_points}}
+
+      # Validation results
+      validation:
+        input_valid: ${{validate_input.data.data.valid}}
+        fraud_score: ${{parallel_check_fraud.data.data.fraud_score}}
+        compliance_score: ${{parallel_check_compliance.data.data.compliance_score}}
+        additional_verification_required: ${{ibridge.global.requires_additional_verification}}
+
+      # Notifications
+      notifications:
+        sent: ${{send_notifications.data.data.sent}}
+        channels: ${{send_notifications.data.data.channels_used}}
+
+      # Audit trail
+      audit:
+        audit_log_id: ${{create_audit_log.data.data.log_id}}
+        request_id: ${{ibridge.timestamp}}
+
+      # Error handling (will be null if no errors)
+      error:
+        code: ${{ibridge.global.error_code}}
+        message: ${{ibridge.global.message}}
+        details: ${{ibridge.global.validation_errors}}
+
+# ============================================================================
+# ADDITIONAL NOTES
+# ============================================================================
+#
+# 1. VARIABLE SCOPES:
+#    - startEvent.*: Original request data
+#    - {worker_name}.*: Results from specific worker
+#    - ibridge.httprequest: Template for HTTP requests to workers
+#    - ibridge.timestamp: Current timestamp
+#    - ibridge.global.*: Global variables set by save_global
+#
+# 2. COMPARISON TYPES:
+#    - Boolean: true, false
+#    - String: "ACTIVE", "SUSPENDED", etc.
+#    - Numeric: ">1000000", "<500", ">=100", "<=50"
+#    - Multiple: Array of conditions (AND logic)
+#
+# 3. TASK EXECUTION:
+#    - Sequential: Tasks execute one after another via targetRef
+#    - Parallel: Multiple tasks with same prerequisites run concurrently
+#    - Conditional: Tasks can skip or branch based on conditions
+#
+# 4. ERROR HANDLING:
+#    - Use save_global to store error information
+#    - Use status_code to override HTTP response code
+#    - Always provide error_code and message for debugging
+#
+# 5. BEST PRACTICES:
+#    - Use descriptive task names
+#    - Add comments for complex logic
+#    - Always handle error cases
+#    - Use global variables for cross-task data
+#    - Structure responses clearly in endEvent
+#
+# 6. IMPORTANT:
+#    - Note the capital K in "defaultTasK" (not "defaultTask")
+#    - Worker names must match RabbitMQ queue names
+#    - Path in YAML is overridden by database configuration
+# ============================================================================

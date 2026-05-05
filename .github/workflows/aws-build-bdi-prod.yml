@@ -1,0 +1,76 @@
+name: AWS Docker Image ibridge-services BDI
+
+on:
+  push:
+    tags:
+      - 'prod_bdi*'
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for tag and image
+        default: 0.0.1_dev
+        required: true
+
+jobs:
+  build:
+    permissions:
+      id-token: write
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag (if manual)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -a prod_bdi_${{ github.event.inputs.version }} -m "Release ${{ github.event.inputs.version }}"
+          git push origin prod_bdi_${{ github.event.inputs.version }}
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            TAG=${GITHUB_REF#refs/tags/}
+            VERSION=${TAG#prod_bdi_}
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          role-to-assume: arn:aws:iam::187361670429:role/aws-github-action-ces-orchestrator-Role-CzktQaGeIBEM
+          aws-region: ap-southeast-3
+
+      - name: Build and Push Docker image to ECR
+        env:
+          GITHUB_USERNAME: ${{ secrets.G_USERNAME }}
+          GITHUB_TOKEN: ${{ secrets.G_TOKEN }}
+          DOCKER_BUILDKIT: 1
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          ECR_REGISTRY: 187361670429.dkr.ecr.ap-southeast-3.amazonaws.com
+          ECR_REPOSITORY: ibridge-services
+        run: |
+          IMAGE_NAME=$ECR_REGISTRY/$ECR_REPOSITORY:$VERSION
+          IMAGE_LATEST=$ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          echo "Logging in to ECR..."
+          aws ecr get-login-password --region ap-southeast-3 | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+          echo "Building image: $IMAGE_NAME"
+          docker build . --file Dockerfile \
+            -t $IMAGE_NAME \
+            -t $IMAGE_LATEST \
+            --secret id=GITHUB_USERNAME,env=GITHUB_USERNAME \
+            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN
+
+          echo "Pushing image tags..."
+          docker push $IMAGE_NAME
+          docker push $IMAGE_LATEST
